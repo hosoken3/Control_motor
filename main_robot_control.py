@@ -53,13 +53,34 @@ import platform
 if __name__ == "__main__":
     motor = None
     try:
-        # Auto-detect defaults for easier debugging based on OS
+        # Detect available ports
+        import serial.tools.list_ports
+        ports = [p.device for p in serial.tools.list_ports.comports()]
+        print(f"DEBUG: Found ports: {ports}")
+        
+        selected_port = None
+        
+        # Heuristic for Windows: Try COM4, then anything not COM1/COM2, then whatever is left
         if platform.system() == "Windows":
-            print("Detected Windows OS. Attempting to use default COM port 'COM3'.")
-            print("If this fails, please change SERIAL_PORT in the code to your actual port (e.g., COM4, COM5).")
-            SERIAL_PORT = 'COM3' 
+            if 'COM4' in ports:
+                selected_port = 'COM4'
+            elif 'COM3' in ports:
+                 # Check if we should try COM3
+                 selected_port = 'COM3'
+            
+            # If we haven't picked one, just take the last strictly numeric COM port (often USB)
+            if not selected_port and ports:
+                selected_port = ports[-1]
+                
         else:
-            SERIAL_PORT = '/dev/ttyS0' # Default for Pi
+            selected_port = '/dev/ttyS0' # Default for Pi
+        
+        if not selected_port:
+             print("No suitable serial port found! Please connect the device.")
+             exit(1)
+             
+        print(f"Attempting to connect to: {selected_port}")
+        SERIAL_PORT = selected_port
 
         motor = STServo(SERIAL_PORT, BAUD_RATE)
         print("Motor Driver initialized successfully.")
