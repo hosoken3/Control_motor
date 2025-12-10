@@ -1,4 +1,5 @@
-```pythonGet-Process | Where-Object {$_.ProcessName -like "*python*"}
+```python
+Get-Process | Where-Object {$_.ProcessName -like "*python*"}
 ```
 
 Handles  NPM(K)    PM(K)      WS(K)     CPU(s)     Id  SI ProcessName        

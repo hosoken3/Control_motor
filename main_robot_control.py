@@ -39,8 +39,30 @@ def execute_move_and_monitor(motor, target_pos, speed):
                 print(f"*** FINAL ROTATIONAL POSITION: {STALL_POSITION} ***")
                 print("="*40 + "\n")
                 
-                # OPTIONAL: Command the motor to stop moving to prevent damage
-                motor.write_position(MOTOR_ID, current_pos, 0) 
+                
+                # --- LOGIC UPDATE BASED ON DIAGRAM ---
+                # "Rotate back to the nearest 45 degrees"
+                # We assume 4096 steps = 360 degrees
+                STEPS_PER_DEGREE = 4096 / 360.0
+                
+                # 1. Calculate current angle in degrees
+                current_deg = current_pos / STEPS_PER_DEGREE
+                
+                # 2. Find the "previous" 45-degree increment (CCW direction / rotate back)
+                # Using floor division to get the nearest lower multiple of 45
+                target_deg = (current_deg // 45) * 45
+                
+                # 3. Convert back to steps
+                target_back_pos = int(target_deg * STEPS_PER_DEGREE)
+                
+                print(f"*** ROTATING BACK TO {target_deg:.1f} degrees ({target_back_pos}) ***")
+                
+                # 4. Execute the move (Rotate back means we move to a smaller position value if we were increasing)
+                # Note: We use a slightly lower speed for the back-off to be safe
+                motor.write_position(MOTOR_ID, target_back_pos, 500)
+                
+                # Wait a bit for the move to complete (simple open-loop wait for demo)
+                time.sleep(1.0)
                 
                 break # Exit the loop immediately
             
