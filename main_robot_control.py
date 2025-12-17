@@ -1,5 +1,10 @@
-from waveshare_driver import STServo
+import platform
 import time
+import threading
+import tkinter as tk
+from tkinter import ttk
+import serial.tools.list_ports
+from waveshare_driver import STServoDriver as STServo
 
 # CONFIGURATION
 SERIAL_PORT = '/dev/ttyS0' # Pi's internal serial port
@@ -9,121 +14,252 @@ TARGET_POSITION = 3500     # The position we command the motor to move towards
 MOVE_SPEED = 1000          # Speed setting (affects how quickly the load builds)
 BAUD_RATE = 1000000        # Default baud rate
 
-def execute_move_and_monitor(motor, target_pos, speed):
+class RobotController:
     """
-    Commands the motor to move and continuously monitors load and position.
-    Returns the stall position if detected, otherwise None.
+    Handles motor control logic in a separate thread.
     """
-    print(f"--- Starting Move to Position {target_pos} ---")
-    motor.write_position(MOTOR_ID, target_pos, speed)
-    
-    start_time = time.time()
-    STALL_POSITION = None
-    
-    # Run the loop for a maximum of 10 seconds or until a stall
-    while time.time() - start_time < 10: 
+    def __init__(self, port, baud_rate, log_callback=None):
+        self.port = port
+        self.baud_rate = baud_rate
+        self.motor = None
+        self.running = False
+        self.thread = None
+        self.log_callback = log_callback
         
-        # 1. READ FEEDBACK
-        current_load = motor.read_load(MOTOR_ID)
-        current_pos = motor.read_position(MOTOR_ID)
+        # Shared state for GUI
+        self.status_message = "待機中"
+        self.current_pos = 0
+        self.current_load = 0
+        self.start_time = 0
+        self.elapsed_time = 0.0
 
-        if current_load is not None and current_pos is not None:
-            # Print status update
-            print(f"Time: {time.time() - start_time:.1f}s | Pos: {current_pos:04d} | Load: {current_load:04d}")
+    def log(self, message):
+        if self.log_callback:
+            self.log_callback(message)
+        print(message)
+
+    def connect(self):
+        try:
+            self.motor = STServo(self.port, self.baud_rate)
+            self.status_message = "接続完了"
+            self.log("コントローラーに接続しました。")
+            # Move to safe start pos
+            self.motor.write_position(MOTOR_ID, 1024, 500)
+            time.sleep(1)
+            return True
+        except Exception as e:
+            self.status_message = f"エラー: {e}"
+            self.log(f"接続エラー: {e}")
+            return False
+
+    def start_move(self):
+        if self.running:
+            return
+        
+        self.running = True
+        self.thread = threading.Thread(target=self._run_logic, daemon=True)
+        self.thread.start()
+
+    def stop_move(self):
+        self.running = False
+        self.status_message = "停止中..."
+        self.log("停止コマンドを受信しました。")
+
+    def _run_logic(self):
+        """
+        The main control loop (formerly execute_move_and_monitor).
+        """
+        if not self.motor:
+            self.status_message = "モーター未接続"
+            self.running = False
+            return
+
+        self.status_message = "動作中..."
+        self.log(f"--- 移動開始: 目標位置 {TARGET_POSITION} ---")
+        self.motor.write_position(MOTOR_ID, TARGET_POSITION, MOVE_SPEED)
+        
+        self.start_time = time.time()
+        stall_detected = False
+        
+        while self.running:
+            # Check timeout (e.g. 10 seconds max run)
+            now = time.time()
+            self.elapsed_time = now - self.start_time
+            if self.elapsed_time > 10:
+                self.status_message = "タイムアウト (10秒)"
+                self.log("タイムアウトしました (10秒)。")
+                break
             
-            # 2. CHECK FOR STALL (Torque Feedback)
-            if abs(current_load) > STALL_THRESHOLD:
-                STALL_POSITION = current_pos
-                print("\n" + "="*40)
-                print(f"*** ⚠️ STALL DETECTED! ***")
-                print(f"*** FINAL ROTATIONAL POSITION: {STALL_POSITION} ***")
-                print("="*40 + "\n")
-                
-                
-                # --- LOGIC UPDATE BASED ON DIAGRAM ---
-                # "Rotate back to the nearest 45 degrees"
-                # We assume 4096 steps = 360 degrees
-                STEPS_PER_DEGREE = 4096 / 360.0
-                
-                # 1. Calculate current angle in degrees
-                current_deg = current_pos / STEPS_PER_DEGREE
-                
-                # 2. Find the "previous" 45-degree increment (CCW direction / rotate back)
-                # Using floor division to get the nearest lower multiple of 45
-                target_deg = (current_deg // 45) * 45
-                
-                # 3. Convert back to steps
-                target_back_pos = int(target_deg * STEPS_PER_DEGREE)
-                
-                print(f"*** ROTATING BACK TO {target_deg:.1f} degrees ({target_back_pos}) ***")
-                
-                # 4. Execute the move (Rotate back means we move to a smaller position value if we were increasing)
-                # Note: We use a slightly lower speed for the back-off to be safe
-                motor.write_position(MOTOR_ID, target_back_pos, 500)
-                
-                # Wait a bit for the move to complete (simple open-loop wait for demo)
-                time.sleep(1.0)
-                
-                break # Exit the loop immediately
+            # 1. READ FEEDBACK
+            current_load = self.motor.read_load(MOTOR_ID)
+            current_pos = self.motor.read_position(MOTOR_ID)
             
-        time.sleep(0.05) # Loop quickly for fast stall detection
+            if current_load is not None and current_pos is not None:
+                self.current_load = current_load
+                self.current_pos = current_pos
+                
+                # 2. CHECK FOR STALL
+                if abs(current_load) > STALL_THRESHOLD:
+                    self.status_message = "衝突検知 (Stall)!"
+                    stall_position = current_pos
+                    stall_detected = True
+                    
+                    self.log(f"*** ⚠️ 衝突を検知しました (位置: {stall_position}, 負荷: {current_load}) ***")
+                    
+                    # --- LOGIC UPDATE: Back off 45 degrees ---
+                    # 4096 steps = 360 degrees
+                    STEPS_PER_DEGREE = 4096 / 360.0
+                    current_deg = current_pos / STEPS_PER_DEGREE
+                    target_deg = (current_deg // 45) * 45
+                    target_back_pos = int(target_deg * STEPS_PER_DEGREE)
+                    
+                    self.log(f"退避動作: {target_deg:.1f}度 ({target_back_pos}) へ戻ります。")
+                    self.motor.write_position(MOTOR_ID, target_back_pos, 500)
+                    time.sleep(1.0) # Wait for move
+                    break
+            
+            time.sleep(0.05)
+        
+        if not stall_detected and self.running:
+            self.status_message = "完了 (衝突なし)"
+            self.log("動作が正常に完了しました。")
+        
+        self.running = False
 
-    return STALL_POSITION
+    def close(self):
+        self.running = False
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=1.0)
+        if self.motor:
+            self.motor.close()
 
-import platform
+class RobotGUI:
+    def __init__(self, root, controller):
+        self.root = root
+        self.controller = controller
+        
+        # Set callback
+        self.controller.log_callback = self.append_log
+        
+        self.root.title("ロボット制御パネル")
+        self.root.geometry("500x500")
+        
+        # Styles
+        style = ttk.Style()
+        style.configure("TLabel", font=("Meiryo", 12))
+        style.configure("TButton", font=("Meiryo", 12))
+        
+        # Main Frame
+        frame = ttk.Frame(root, padding="20")
+        frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Status Label
+        self.lbl_status = ttk.Label(frame, text="ステータス: 待機中", font=("Meiryo", 14, "bold"))
+        self.lbl_status.pack(pady=10)
+        
+        # Monitor Frame
+        monitor_frame = ttk.LabelFrame(frame, text="モニター", padding="10")
+        monitor_frame.pack(fill=tk.X, pady=10)
+        
+        self.lbl_time = ttk.Label(monitor_frame, text="経過時間: 0.0s")
+        self.lbl_time.pack(anchor=tk.W)
+        
+        self.lbl_pos = ttk.Label(monitor_frame, text="現在位置: ----")
+        self.lbl_pos.pack(anchor=tk.W)
+        
+        self.lbl_load = ttk.Label(monitor_frame, text="負荷: ----")
+        self.lbl_load.pack(anchor=tk.W)
+        
+        # Control Buttons
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(pady=20)
+        
+        self.btn_start = ttk.Button(btn_frame, text="開始 (START)", command=self.on_start)
+        self.btn_start.pack(side=tk.LEFT, padx=10)
+        
+        self.btn_stop = ttk.Button(btn_frame, text="停止 (STOP)", command=self.on_stop)
+        self.btn_stop.pack(side=tk.LEFT, padx=10)
+
+        # Log Area
+        log_frame = ttk.LabelFrame(frame, text="実行ログ", padding="10")
+        log_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+
+        from tkinter.scrolledtext import ScrolledText
+        self.txt_log = ScrolledText(log_frame, height=10, state='disabled', font=("Consolas", 10))
+        self.txt_log.pack(fill=tk.BOTH, expand=True)
+        
+        # Start update loop
+        self.update_gui()
+
+    def append_log(self, message):
+        """Append a message to the scrolled text widget safely."""
+        def _update():
+            self.txt_log.configure(state='normal')
+            self.txt_log.insert(tk.END, message + "\n")
+            self.txt_log.see(tk.END)
+            self.txt_log.configure(state='disabled')
+        
+        # Ensure thread safety for GUI updates
+        self.root.after(0, _update)
+
+    def on_start(self):
+        self.controller.start_move()
+
+    def on_stop(self):
+        self.controller.stop_move()
+
+    def update_gui(self):
+        # Update labels from controller state
+        self.lbl_status.config(text=f"ステータス: {self.controller.status_message}")
+        self.lbl_time.config(text=f"経過時間: {self.controller.elapsed_time:.1f}s")
+        self.lbl_pos.config(text=f"現在位置: {self.controller.current_pos}")
+        self.lbl_load.config(text=f"負荷: {self.controller.current_load}")
+        
+        # Check if we should disable start button (if already running)
+        if self.controller.running:
+             self.btn_start.state(['disabled'])
+        else:
+             self.btn_start.state(['!disabled'])
+             
+        # Schedule next update
+        self.root.after(100, self.update_gui)
+
+def find_serial_port():
+    ports = [p.device for p in serial.tools.list_ports.comports()]
+    print(f"DEBUG: Found ports: {ports}")
+    
+    selected_port = None
+    if platform.system() == "Windows":
+        if 'COM4' in ports: selected_port = 'COM4'
+        elif 'COM3' in ports: selected_port = 'COM3'
+        if not selected_port and ports: selected_port = ports[-1]
+    else:
+        selected_port = '/dev/ttyS0'
+        
+    return selected_port
 
 if __name__ == "__main__":
-    motor = None
+    port_name = find_serial_port()
+    if not port_name:
+        print("シリアルポートが見つかりませんでした。")
+        # We can still show GUI but it won't work well
+        port_name = "COM_DUMMY" 
+    
+    print(f"{port_name} に接続中...")
+    
+    # Pass None for controller init, then set callback in GUI if needed,
+    # or reorganize. Here we create controller first.
+    controller = RobotController(port_name, BAUD_RATE)
+    
+    if controller.connect():
+        print("コントローラー接続成功")
+    else:
+        print("コントローラー接続失敗")
+
+    root = tk.Tk()
+    app = RobotGUI(root, controller)
+    
     try:
-        # Detect available ports
-        import serial.tools.list_ports
-        ports = [p.device for p in serial.tools.list_ports.comports()]
-        print(f"DEBUG: Found ports: {ports}")
-        
-        selected_port = None
-        
-        # Heuristic for Windows: Try COM4, then anything not COM1/COM2, then whatever is left
-        if platform.system() == "Windows":
-            if 'COM4' in ports:
-                selected_port = 'COM4'
-            elif 'COM3' in ports:
-                 # Check if we should try COM3
-                 selected_port = 'COM3'
-            
-            # If we haven't picked one, just take the last strictly numeric COM port (often USB)
-            if not selected_port and ports:
-                selected_port = ports[-1]
-                
-        else:
-            selected_port = '/dev/ttyS0' # Default for Pi
-        
-        if not selected_port:
-             print("No suitable serial port found! Please connect the device.")
-             exit(1)
-             
-        print(f"Attempting to connect to: {selected_port}")
-        SERIAL_PORT = selected_port
-
-        motor = STServo(SERIAL_PORT, BAUD_RATE)
-        print("Motor Driver initialized successfully.")
-        
-        # Set to an initial safe position before starting the test
-        motor.write_position(MOTOR_ID, 1024, 500)
-        time.sleep(2) 
-        
-        # Execute the main test routine
-        final_position = execute_move_and_monitor(motor, TARGET_POSITION, MOVE_SPEED)
-
-        if not final_position:
-             print("Move finished successfully without a stall.")
-             
-    except Exception as e:
-        print(f"\nFATAL ERROR: {e}")
-        print("Check Pi Serial Config (sudo raspi-config) and wiring (TX/RX/12V).")
-        
+        root.mainloop()
     finally:
-        if motor:
-            motor.close()
-            print("Script finished. Serial port closed.")
-        else:
-            print("Script finished. Motor driver was not initialized.")
+        controller.close()

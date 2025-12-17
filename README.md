@@ -16,6 +16,7 @@ This project contains Python scripts to control Waveshare ST3215 Bus Servos usin
 *   **Software / ソフトウェア**:
     *   Python 3
     *   `pyserial` library / `pyserial` ライブラリ
+    *   `tkinter` (Usually included with Python, but requires `python3-tk` on some Linux distros) / `tkinter` (通常Pythonに含まれていますが、一部のLinuxでは `python3-tk` が必要です)
 
 ## Installation / インストール
 
@@ -43,13 +44,15 @@ This project contains Python scripts to control Waveshare ST3215 Bus Servos usin
 2.  **Run the script / スクリプトの実行**:
     ```bash
     python main_robot_control.py
+    # or with uv / あるいは uv を使う場合:
+    uv run main_robot_control.py
     ```
 
-This script will / このスクリプトは以下の動作を行います:
-1.  Initialize the motor driver. / モータードライバを初期化します。
-2.  Move the motor to a safe start position. / モーターを安全な開始位置に移動させます。
-3.  Move to a target position while monitoring torque. / トルクを監視しながら目標位置まで移動します。
-4.  **Detect Stall**: If the load exceeds the threshold, it stops and prints the final position. / **ストール検出**: 負荷が閾値を超えた場合、停止して最終的な位置を表示します。
+This script will launch a GUI window / このスクリプトはGUIウィンドウを起動します:
+1.  **Status Display**: Shows current Time, Position, and Load. / **ステータス表示**: 現在の時間、位置、負荷を表示します。
+2.  **START Button**: Starts the motor movement and monitoring. / **START ボタン**: モーターの動作と監視を開始します。
+3.  **STOP Button**: Stops the motor immediately. / **STOP ボタン**: モーターを即座に停止します。
+4.  **Stall Detection**: If a stall is detected, the status will red "STALL DETECTED!" and the motor will back off. / **ストール検出**: ストールが検出されると、ステータスが「STALL DETECTED!」になり、モーターが少し戻ります。
 
 ## Files / ファイル構成
 
