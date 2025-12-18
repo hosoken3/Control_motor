@@ -2,7 +2,7 @@ from waveshare_driver import STServoDriver
 import time
 
 # CONFIGURATION
-SERIAL_PORT = '/dev/ttyS0' # Pi's internal serial port
+SERIAL_PORT = '/dev/ttyAMA0' # Pi's internal serial port
 MOTOR_ID = 1               # Servo ID
 STALL_THRESHOLD = 600      # Arbitrary value: Load magnitude over this indicates a stall
 TARGET_POSITION = 3500     # The position we command the motor to move towards
