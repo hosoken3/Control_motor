@@ -14,6 +14,14 @@ def execute_move_and_monitor(motor, target_pos, speed):
     Commands the motor to move and continuously monitors load and position.
     Returns the stall position if detected, otherwise None.
     """
+    # 0. GET START POSITION
+    start_pos = motor.read_position(MOTOR_ID)
+    if start_pos is None:
+        print("WARNING: Could not read start position. Assuming current position logic might be flawed if relative move needed.")
+        start_pos = 0 # Fallback, though ideally we retry
+    else:
+        print(f"Start Position: {start_pos}")
+
     print(f"--- Starting Move to Position {target_pos} ---")
     motor.write_position(MOTOR_ID, target_pos, speed)
     
@@ -39,29 +47,15 @@ def execute_move_and_monitor(motor, target_pos, speed):
                 print(f"*** FINAL ROTATIONAL POSITION: {STALL_POSITION} ***")
                 print("="*40 + "\n")
                 
+                # --- LOGIC UPDATE: RELATIVE 45 DEGREE OFFSET ---
+                target_back_pos, deg_offset = calculate_45_degree_target(start_pos, current_pos)
                 
-                # --- LOGIC UPDATE BASED ON DIAGRAM ---
-                # "Rotate back to the nearest 45 degrees"
-                # We assume 4096 steps = 360 degrees
-                STEPS_PER_DEGREE = 4096 / 360.0
+                print(f"*** ROTATING TO {deg_offset:.1f} deg relative to start ({target_back_pos}) ***")
                 
-                # 1. Calculate current angle in degrees
-                current_deg = current_pos / STEPS_PER_DEGREE
-                
-                # 2. Find the "previous" 45-degree increment (CCW direction / rotate back)
-                # Using floor division to get the nearest lower multiple of 45
-                target_deg = (current_deg // 45) * 45
-                
-                # 3. Convert back to steps
-                target_back_pos = int(target_deg * STEPS_PER_DEGREE)
-                
-                print(f"*** ROTATING BACK TO {target_deg:.1f} degrees ({target_back_pos}) ***")
-                
-                # 4. Execute the move (Rotate back means we move to a smaller position value if we were increasing)
-                # Note: We use a slightly lower speed for the back-off to be safe
+                # 4. Execute the move
                 motor.write_position(MOTOR_ID, target_back_pos, 500)
                 
-                # Wait a bit for the move to complete (simple open-loop wait for demo)
+                # Wait a bit for the move to complete
                 time.sleep(1.0)
                 
                 break # Exit the loop immediately
@@ -69,6 +63,34 @@ def execute_move_and_monitor(motor, target_pos, speed):
         time.sleep(0.05) # Loop quickly for fast stall detection
 
     return STALL_POSITION
+
+def calculate_45_degree_target(start_pos, current_pos):
+    """
+    Calculates a target position that is a multiple of 45 degrees 
+    relative to the start_pos, closest to the current_pos.
+    Envures the target is not the start_pos itself.
+    """
+    STEPS_PER_DEGREE = 4096 / 360.0
+    
+    diff_steps = current_pos - start_pos
+    diff_deg = diff_steps / STEPS_PER_DEGREE
+    
+    # Round to nearest 45 degrees
+    # e.g. 10 -> 0, 40 -> 45, 80 -> 90
+    target_deg_rel = round(diff_deg / 45.0) * 45.0
+    
+    # Requirement: "different place from the first position"
+    # If the nearest 45 increment is 0 (start position), force it to +/- 45
+    if target_deg_rel == 0:
+        if diff_deg >= 0:
+            target_deg_rel = 45.0
+        else:
+            target_deg_rel = -45.0
+            
+    # Calculate target steps
+    target_pos = start_pos + int(target_deg_rel * STEPS_PER_DEGREE)
+    
+    return target_pos, target_deg_rel
 
 import platform
 
