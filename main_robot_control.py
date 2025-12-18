@@ -1,4 +1,4 @@
-from waveshare_driver import STServo
+from waveshare_driver import STServoDriver
 import time
 
 # CONFIGURATION
@@ -104,7 +104,7 @@ if __name__ == "__main__":
         print(f"Attempting to connect to: {selected_port}")
         SERIAL_PORT = selected_port
 
-        motor = STServo(SERIAL_PORT, BAUD_RATE)
+        motor = STServoDriver(SERIAL_PORT, BAUD_RATE)
         print("Motor Driver initialized successfully.")
         
         # Set to an initial safe position before starting the test
