@@ -203,6 +203,9 @@ class RobotGUI:
         self.root.after(0, _update)
 
     def on_start(self):
+        if not self.controller.motor:
+             self.lbl_status.config(text="Status: Not Connected")
+             return
         self.controller.start_move()
 
     def on_stop(self):
@@ -211,18 +214,33 @@ class RobotGUI:
     def update_gui(self):
         # Update labels from controller state
         self.lbl_status.config(text=f"ステータス: {self.controller.status_message}")
-        self.lbl_time.config(text=f"経過時間: {self.controller.elapsed_time:.1f}s")
-        self.lbl_pos.config(text=f"現在位置: {self.controller.current_pos}")
-        self.lbl_load.config(text=f"負荷: {self.controller.current_load}")
+        try:
+            self.lbl_time.config(text=f"経過時間: {self.controller.elapsed_time:.1f}s")
+            self.lbl_pos.config(text=f"現在位置: {self.controller.current_pos}")
+            self.lbl_load.config(text=f"負荷: {self.controller.current_load}")
+        except Exception:
+            pass
         
         # Check if we should disable start button (if already running)
-        if self.controller.running:
+        if self.controller.running or not self.controller.motor:
              self.btn_start.state(['disabled'])
         else:
              self.btn_start.state(['!disabled'])
              
         # Schedule next update
         self.root.after(100, self.update_gui)
+
+    def start_connection_thread(self):
+        t = threading.Thread(target=self._connect_task, daemon=True)
+        t.start()
+        
+    def _connect_task(self):
+        self.controller.status_message = "Connecting..."
+        success = self.controller.connect()
+        if success:
+             self.controller.status_message = "Connected (Ready)"
+        else:
+             self.controller.status_message = "Connection Failed"
 
 def find_serial_port():
     ports = [p.device for p in serial.tools.list_ports.comports()]
@@ -242,22 +260,18 @@ if __name__ == "__main__":
     port_name = find_serial_port()
     if not port_name:
         print("シリアルポートが見つかりませんでした。")
-        # We can still show GUI but it won't work well
         port_name = "COM_DUMMY" 
     
-    print(f"{port_name} に接続中...")
+    print(f"Target Port: {port_name}")
     
-    # Pass None for controller init, then set callback in GUI if needed,
-    # or reorganize. Here we create controller first.
+    # Init controller but DO NOT CONNECT yet (blocking)
     controller = RobotController(port_name, BAUD_RATE)
-    
-    if controller.connect():
-        print("コントローラー接続成功")
-    else:
-        print("コントローラー接続失敗")
 
     root = tk.Tk()
     app = RobotGUI(root, controller)
+    
+    # Auto-connect in background after window loads
+    root.after(500, app.start_connection_thread)
     
     try:
         root.mainloop()
