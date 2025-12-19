@@ -75,17 +75,24 @@ def calculate_45_degree_target(start_pos, current_pos):
     diff_steps = current_pos - start_pos
     diff_deg = diff_steps / STEPS_PER_DEGREE
     
-    # Round to nearest 45 degrees
-    # e.g. 10 -> 0, 40 -> 45, 80 -> 90
-    target_deg_rel = round(diff_deg / 45.0) * 45.0
+    # Floor to nearest 45 degrees
+    # e.g. 10 -> 0, 40 -> 0, 45 -> 45, 80 -> 45
+    target_deg_rel = (diff_deg // 45.0) * 45.0
     
     # Requirement: "different place from the first position"
-    # If the nearest 45 increment is 0 (start position), force it to +/- 45
-    if target_deg_rel == 0:
-        if diff_deg >= 0:
-            target_deg_rel = 45.0
-        else:
-            target_deg_rel = -45.0
+    # If the floor result is 0 (start position), we might still want to move?
+    # User request was: "0-44.9 -> 0". 
+    # If this results in 0, and start_pos is 0-relative, it means we go back to start.
+    # The previous requirement "different place" might conflict if we strictly floor 10 -> 0.
+    # However, user explicitly asked for this mapping.
+    # I will keep the check ensuring we don't return EXACTLY start steps if that was the "different place" intent, 
+    # but based on "0-44.9 -> 0", returning 0 offset seems to be what is wanted for that range.
+    # But wait, original request: "Stop... 45 degree different place... add or remove rotation".
+    # If I am at 10 deg, and I floor to 0, I am moving back 10 deg. That IS a move.
+    # So returning offset 0 means moving back to start. That is valid.
+    # I will remove the "force 45" logic if it conflicts with the explicit "0->0" request.
+    # But I will keep the "different place" spirit by not doing anything special if result is 0, 
+    # just returning target_deg_rel=0 implies target_pos = start_pos.
             
     # Calculate target steps
     target_pos = start_pos + int(target_deg_rel * STEPS_PER_DEGREE)
